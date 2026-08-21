@@ -1,0 +1,26 @@
+services:
+  warant:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      WARANT_DATABASE_URL: sqlite:////data/warant.db?check_same_thread=false
+      WARANT_SECRET: ${WARANT_SECRET:-change-me-in-production}
+    volumes:
+      - warant_data:/data
+    restart: unless-stopped
+
+  # Optional: switch to PostgreSQL by pointing WARANT_DATABASE_URL at this
+  # service, e.g. postgresql://warant:warant@db:5432/warant
+  # db:
+  #   image: postgres:16-alpine
+  #   environment:
+  #     POSTGRES_USER: warant
+  #     POSTGRES_PASSWORD: warant
+  #     POSTGRES_DB: warant
+  #   volumes:
+  #     - pg_data:/var/lib/postgresql/data
+  #   restart: unless-stopped
+
+volumes:
+  warant_data:

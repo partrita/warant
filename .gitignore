@@ -1,0 +1,23 @@
+.states
+.web
+assets/external/
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+
+# Reflex
+.web/
+backend/
+*.db
+*.sqlite3
+reflex.lock/
+
+# Env / tooling
+.env
+.DS_Store
+.pytest_cache/
+
+# uv
+# uv.lock is committed intentionally

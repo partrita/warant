@@ -1,0 +1,24 @@
+[project]
+name = "warant"
+version = "0.1.0"
+description = "WarAnt - multiplayer ant queen colony strategy game inspired by OGame"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+license = { text = "MIT" }
+dependencies = [
+    "reflex>=0.9.8",
+    "bcrypt>=4.1",
+    "sqlmodel>=0.0.39",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

@@ -1,0 +1,15 @@
+.git
+.venv
+.web
+backend
+__pycache__
+*.py[cod]
+*.db
+*.sqlite3
+.pytest_cache
+tests
+.agents
+.env
+.DS_Store
+node_modules
+reflex.lock
