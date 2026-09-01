@@ -273,7 +273,7 @@ def game_shell(active_route: str, *children, **props) -> rx.Component:
         rx.script(
             "window.setInterval(function(){"
             "var b=document.getElementById('wa-auto-refresh');"
-            "if(b) b.click();}, 15000);"
+            "if(b) b.click();}, 1000);"
         ),
         min_height="100vh",
         background=C_BG,

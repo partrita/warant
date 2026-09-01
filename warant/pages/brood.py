@@ -61,11 +61,12 @@ class BroodState(GameState):
 
     @rx.event(background=True)
     async def load(self):
-        await GameState.refresh_game()
         async with self:
             if self._require_login():
                 return
+            self._sync_game()
             pid = self._player_id()
+
             with game_session() as s:
                 nest = self._nest(s)
                 if nest is None:
@@ -82,14 +83,16 @@ class BroodState(GameState):
                 for j in s.exec(
                     select(BroodJob).where(BroodJob.nest_id == nest.id)
                 ).all():
-                    total = j.count * j.unit_seconds or 1
-                    done = (g.utc_now() - j.started_at).total_seconds()
+                    unit_sec = max(j.unit_seconds, 0.001)
+                    elapsed = max(0.0, (g.utc_now() - j.started_at).total_seconds())
+                    cur_progress = elapsed % unit_sec
+                    pct = int(min(100, max(0, cur_progress / unit_sec * 100)))
                     jobs_out.append(
                         [
                             f"/img/u_{j.unit_key}.svg",
                             g.UNITS[j.unit_key].name,
                             j.count,
-                            int(done / total * 100),
+                            pct,
                         ]
                     )
                 self.jobs = jobs_out
@@ -139,6 +142,9 @@ class BroodState(GameState):
                     ):
                         msg = f"행동 에너지가 부족합니다 ({int(g.COST_BROOD_BATCH)} 필요)."
                     else:
+                        nest.res_food -= cost_f
+                        nest.res_water -= cost_w
+                        s.add(nest)
                         t = g.unit_build_time(
                             key,
                             engine.get_building_level(s, nest.id, "brood_chamber"),
@@ -163,9 +169,6 @@ class BroodState(GameState):
                                 )
                             )
                         msg = f"{u.name} ×{cnt} 부화 시작! (에너지 -{int(g.COST_BROOD_BATCH)})"
-                    nest.res_food -= cost_f
-                    nest.res_water -= cost_w
-                    s.add(nest)
                     s.commit()
             self.toast = msg
         yield BroodState.load

@@ -1,9 +1,9 @@
 """WarAnt app entry: pages, theme, and background game ticker."""
 
 import asyncio
+import contextlib
 
 import reflex as rx
-
 from . import db, engine
 from .db import game_session
 from .pages.alliance import alliance_page
@@ -20,16 +20,31 @@ from .pages.research import research_page
 db.init_db()
 
 
+@contextlib.asynccontextmanager
 async def _game_ticker():
     """Resolve due marches and ticks periodically, even when idle."""
-    while True:
-        try:
-            with game_session() as s:
-                engine.process_all(s)
-                s.commit()
-        except Exception:  # noqa: BLE001 - keep the ticker alive no matter what
-            pass
-        await asyncio.sleep(10)
+    async def _loop():
+        while True:
+            try:
+                with game_session() as s:
+                    engine.process_all(s)
+                    s.commit()
+            except asyncio.CancelledError:
+                break
+            except Exception:  # noqa: BLE001 - keep the ticker alive no matter what
+                pass
+            try:
+                await asyncio.sleep(1)
+            except asyncio.CancelledError:
+                break
+
+    task = asyncio.create_task(_loop())
+    try:
+        yield
+    finally:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
 
 
 app = rx.App(

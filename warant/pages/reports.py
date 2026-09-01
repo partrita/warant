@@ -162,13 +162,16 @@ def _body_lines(kind: str, b: dict) -> list[str]:
     return []
 
 
-@dataclass
-class ReportCard:
+from pydantic import BaseModel
+
+
+class ReportCard(BaseModel):
     rid: int
     kind: str
     title: str
     created: str
-    lines: list[str] = field(default_factory=list)
+    lines: list[str] = []
+
 
 
 class ReportsState(GameState):
@@ -176,11 +179,12 @@ class ReportsState(GameState):
 
     @rx.event(background=True)
     async def load(self):
-        await GameState.refresh_game()
         async with self:
             if self._require_login():
                 return
+            self._sync_game()
             with game_session() as s:
+
                 reps = s.exec(
                     select(Report)
                     .where(Report.player_id == self._player_id())

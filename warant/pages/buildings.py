@@ -29,11 +29,12 @@ class BuildingsState(GameState):
 
     @rx.event(background=True)
     async def load(self):
-        await GameState.refresh_game()
         async with self:
             if self._require_login():
                 return
+            self._sync_game()
             with game_session() as s:
+
                 nest = self._nest(s)
                 if nest is None:
                     return

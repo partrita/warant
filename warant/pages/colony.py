@@ -41,11 +41,12 @@ class ColonyState(GameState):
 
     @rx.event(background=True)
     async def tick(self):
-        await GameState.refresh_game()
         async with self:
             if self._require_login():
                 return
+            self._sync_game()
             pid = self._player_id()
+
             with game_session() as s:
                 player_nests = engine.nests_of(s, pid)
                 nest = self._nest(s)
@@ -61,14 +62,16 @@ class ColonyState(GameState):
                 ).all()
                 out = []
                 for j in jobs:
-                    total = j.count * j.unit_seconds or 1
-                    done = (g.utc_now() - j.started_at).total_seconds()
+                    unit_sec = max(j.unit_seconds, 0.001)
+                    elapsed = max(0.0, (g.utc_now() - j.started_at).total_seconds())
+                    cur_progress = elapsed % unit_sec
+                    pct = int(min(100, max(0, cur_progress / unit_sec * 100)))
                     out.append(
                         [
                             f"/img/u_{j.unit_key}.svg",
                             g.UNITS[j.unit_key].name,
                             j.count,
-                            int(min(100, max(0, done / total * 100))),
+                            pct,
                         ]
                     )
                 self.brood_jobs = out
@@ -198,12 +201,12 @@ def colony_page() -> rx.Component:
             ),
             rx.divider(border_color=C_BORDER),
             _res_detail_row(
-                "/img/res_food.svg", "먹이", GameState.res_food.to(str),
-                GameState.prod_food.to(str), C_GREEN,
+                "/img/res_food.svg", "먹이", GameState.food_disp,
+                GameState.food_rate_disp, C_GREEN,
             ),
             _res_detail_row(
-                "/img/res_water.svg", "물", GameState.res_water.to(str),
-                GameState.prod_water.to(str), C_BLUE,
+                "/img/res_water.svg", "물", GameState.water_disp,
+                GameState.water_rate_disp, C_BLUE,
             ),
             rx.divider(border_color=C_BORDER),
             # action energy

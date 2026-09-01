@@ -26,11 +26,12 @@ class RankingState(GameState):
 
     @rx.event(background=True)
     async def load(self):
-        await GameState.refresh_game()
         async with self:
             if self._require_login():
                 return
+            self._sync_game()
             with game_session() as s:
+
                 players = s.exec(select(Player)).all()
                 scored = sorted(
                     ((p, engine.player_points(s, p.id)) for p in players),

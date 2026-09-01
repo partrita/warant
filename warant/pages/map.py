@@ -7,6 +7,7 @@ import math
 from dataclasses import dataclass
 
 import reflex as rx
+from pydantic import BaseModel
 from sqlmodel import select
 
 from .. import engine, gamedata as g
@@ -27,12 +28,12 @@ from ..models import March, Nest, Player
 VIEW_R = 3  # 7x7 grid
 
 
-@dataclass
-class Cell:
+class Cell(BaseModel):
     x: int
     y: int
     kind: str
     label: str
+
 
 
 class MapState(GameState):
@@ -54,13 +55,46 @@ class MapState(GameState):
     march_eta: str = ""
     my_nest_ids: list[int] = []
 
+    def _sync_cells(self, s, pid: int):
+        nests = {
+            (n.x, n.y): n
+            for n in s.exec(
+                select(Nest).where(
+                    Nest.x >= self.cx - VIEW_R,
+                    Nest.x <= self.cx + VIEW_R,
+                    Nest.y >= self.cy - VIEW_R,
+                    Nest.y <= self.cy + VIEW_R,
+                )
+            ).all()
+        }
+        rows = []
+        for y in range(self.cy - VIEW_R, self.cy + VIEW_R + 1):
+            row = []
+            for x in range(self.cx - VIEW_R, self.cx + VIEW_R + 1):
+                kind, label = ("wild", "")
+                n = nests.get((x, y))
+                if n is not None and 0 <= x < g.MAP_SIZE and 0 <= y < g.MAP_SIZE:
+                    if n.player_id == pid:
+                        kind = "own"
+                        label = n.name
+                    else:
+                        kind = "enemy"
+                        owner = s.get(Player, n.player_id)
+                        label = f"{owner.username}의 {n.name}" if owner else n.name
+                elif not (0 <= x < g.MAP_SIZE and 0 <= y < g.MAP_SIZE):
+                    kind = "void"
+                row.append(Cell(x=x, y=y, kind=kind, label=label))
+            rows.append(row)
+        self.cells = rows
+
     @rx.event(background=True)
     async def load(self):
-        await GameState.refresh_game()
         async with self:
             if self._require_login():
                 return
+            self._sync_game()
             pid = self._player_id()
+
             with game_session() as s:
                 nest = self._nest(s)
                 if nest is None:
@@ -70,52 +104,28 @@ class MapState(GameState):
                 movable = [[k, g.UNITS[k].name, "0"] for k in g.UNIT_ORDER]
                 self.unit_inputs = movable
                 self.my_nest_ids = [n.id for n in engine.nests_of(s, pid)]
-            yield MapState.refresh_cells
+                self._sync_cells(s, pid)
 
     @rx.event(background=True)
     async def pan(self, dx: int, dy: int):
         async with self:
+            if self._require_login():
+                return
             self.cx = max(0, min(g.MAP_SIZE - 1, self.cx + dx))
             self.cy = max(0, min(g.MAP_SIZE - 1, self.cy + dy))
-        yield MapState.refresh_cells
+            pid = self._player_id()
+            with game_session() as s:
+                self._sync_cells(s, pid)
 
     @rx.event(background=True)
     async def refresh_cells(self):
         async with self:
             if self._require_login():
                 return
+            pid = self._player_id()
             with game_session() as s:
-                nests = {
-                    (n.x, n.y): n
-                    for n in s.exec(
-                        select(Nest).where(
-                            Nest.x >= self.cx - VIEW_R,
-                            Nest.x <= self.cx + VIEW_R,
-                            Nest.y >= self.cy - VIEW_R,
-                            Nest.y <= self.cy + VIEW_R,
-                        )
-                    ).all()
-                }
-                pid = self._player_id()
-                rows = []
-                for y in range(self.cy - VIEW_R, self.cy + VIEW_R + 1):
-                    row = []
-                    for x in range(self.cx - VIEW_R, self.cx + VIEW_R + 1):
-                        kind, label = ("wild", "")
-                        n = nests.get((x, y))
-                        if n is not None and 0 <= x < g.MAP_SIZE and 0 <= y < g.MAP_SIZE:
-                            if n.player_id == pid:
-                                kind = "own"
-                                label = n.name
-                            else:
-                                kind = "enemy"
-                                owner = s.get(Player, n.player_id)
-                                label = f"{owner.username}의 {n.name}" if owner else n.name
-                        elif not (0 <= x < g.MAP_SIZE and 0 <= y < g.MAP_SIZE):
-                            kind = "void"
-                        row.append(Cell(x=x, y=y, kind=kind, label=label))
-                    rows.append(row)
-                self.cells = rows
+                self._sync_cells(s, pid)
+
 
     @rx.event(background=True)
     async def select_cell(self, x: int, y: int):

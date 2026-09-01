@@ -36,11 +36,12 @@ class AllianceState(GameState):
 
     @rx.event(background=True)
     async def load(self):
-        await GameState.refresh_game()
         async with self:
             if self._require_login():
                 return
+            self._sync_game()
             pid = self._player_id()
+
             with game_session() as s:
                 player = s.get(Player, pid)
                 aid = player.alliance_id
