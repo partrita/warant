@@ -24,6 +24,28 @@ from ..game_state import GameState
 from ..models import BroodJob, Nest, Player
 
 
+BASE_ANT_CAP = 50
+ANT_CAP_PER_METABOLISM = 25
+
+
+def ant_population_cap(research: dict[str, int]) -> int:
+    """Maximum mobile ants this colony can support.
+
+    Every colony starts at 50 ants. Metabolism research adds 25 population
+    capacity per completed level, while also reducing unit production time.
+    """
+    return BASE_ANT_CAP + ANT_CAP_PER_METABOLISM * research.get("metabolism", 0)
+
+
+def queued_mobile_ants(session, nest_id: int) -> int:
+    """Count mobile ants already committed to brood queues."""
+    return sum(
+        j.count
+        for j in session.exec(select(BroodJob).where(BroodJob.nest_id == nest_id)).all()
+        if j.unit_key in g.UNIT_ORDER
+    )
+
+
 def _unit_row(key: str, nest: Nest, brood_lvl: int, research: dict[str, int]) -> list:
     u = g.UNITS[key]
     locked = ""
@@ -58,6 +80,8 @@ class BroodState(GameState):
     jobs: list[list] = []  # [icon, name, remaining, pct]
     army_chips: list[list] = []  # [icon, name, count]
     brood_level: int = 0
+    ant_population: int = 0
+    ant_population_cap: int = BASE_ANT_CAP
 
     @rx.event(background=True)
     async def load(self):
@@ -74,6 +98,9 @@ class BroodState(GameState):
                 research = engine.research_levels(s, pid)
                 brood_lvl = engine.get_building_level(s, nest.id, "brood_chamber")
                 self.brood_level = brood_lvl
+                self.ant_population_cap = ant_population_cap(research)
+                army = engine.army_at(s, nest.id)
+                self.ant_population = sum(army.get(key, 0) for key in g.UNIT_ORDER)
                 self.unit_rows = [
                     _unit_row(key, nest, brood_lvl, research)
                     for key in g.UNIT_ORDER + g.DEFENSE_ORDER
@@ -97,7 +124,6 @@ class BroodState(GameState):
                     )
                 self.jobs = jobs_out
 
-                army = engine.army_at(s, nest.id)
                 self.army_chips = [
                     [f"/img/u_{k}.svg", g.UNITS[k].name, v]
                     for k, v in sorted(army.items())
@@ -133,6 +159,23 @@ class BroodState(GameState):
                             except ValueError:
                                 cnt = 1
                             break
+
+                    if key in g.UNIT_ORDER:
+                        army = engine.army_at(s, nest.id)
+                        current = sum(army.get(unit_key, 0) for unit_key in g.UNIT_ORDER)
+                        queued = queued_mobile_ants(s, nest.id)
+                        cap = ant_population_cap(research)
+                        available = max(0, cap - current - queued)
+                        if cnt > available:
+                            msg = (
+                                f"콜로니 개미 수 한도 초과입니다. "
+                                f"현재 {current + queued:,}/{cap:,}마리, "
+                                f"최대 {available:,}마리까지 부화할 수 있습니다."
+                            )
+                            s.commit()
+                            self.toast = msg
+                            return
+
                     cost_f = u.food * cnt
                     cost_w = u.water * cnt
                     if nest.res_food < cost_f or nest.res_water < cost_w:
@@ -286,6 +329,31 @@ def brood_page() -> rx.Component:
     return game_shell(
         "/brood",
         page_title("육아방 · 군세", "/img/icon_sword.svg"),
+        panel(
+            rx.hstack(
+                pixel_img("/img/u_worker.svg", 22),
+                rx.text("콜로니 개미", size="2", weight="bold"),
+                rx.spacer(),
+                rx.text(
+                    BroodState.ant_population.to(str),
+                    " / ",
+                    BroodState.ant_population_cap.to(str),
+                    "마리",
+                    size="2",
+                    weight="bold",
+                    color=C_GREEN,
+                ),
+                spacing="2",
+                width="100%",
+            ),
+            rx.text(
+                "기본 한도 50마리 · 신진대사 연구 1단계마다 +25마리. "
+                "연구는 개미 생산 시간도 단축합니다.",
+                size="1",
+                color=C_DIM,
+            ),
+            spacing="2",
+        ),
         rx.cond(
             BroodState.jobs.length() > 0,
             panel(

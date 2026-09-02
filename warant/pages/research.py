@@ -62,12 +62,15 @@ class ResearchState(GameState):
                             f"{g.RESEARCH[r.req_research].name} "
                             f"{r.req_research_level or 1}단계 필요"
                         )
+                    desc = r.desc
+                    if key == "metabolism":
+                        desc += " · 콜로니 개미 한도 +25마리 / 단계"
                     rows.append(
                         [
                             key,
                             RESEARCH_ICON[key],
                             r.name,
-                            r.desc,
+                            desc,
                             lvl,
                             f"{int(cf):,}",
                             f"{int(cw):,}",
