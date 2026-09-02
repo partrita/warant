@@ -33,13 +33,13 @@ def _auth_tabs() -> rx.Component:
                     rx.input(
                         placeholder="비밀번호",
                         name="password",
-                        type_="password",
+                        type="password",
                         width="100%",
                         required=True,
                     ),
                     rx.button(
                         "로그인",
-                        type_="submit",
+                        type="submit",
                         width="100%",
                         color_scheme="amber",
                         size="3",
@@ -67,7 +67,7 @@ def _auth_tabs() -> rx.Component:
                     rx.input(
                         placeholder="비밀번호 (4자 이상)",
                         name="password",
-                        type_="password",
+                        type="password",
                         width="100%",
                         required=True,
                     ),
