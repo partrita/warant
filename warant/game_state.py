@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import reflex as rx
 from sqlmodel import select
 
-from . import engine, gamedata as g
+from . import engine
+from . import gamedata as g
 from .auth_state import AuthState
 from .db import game_session
 from .models import ConstructionJob, Nest, Player, ResearchJob
@@ -30,6 +33,8 @@ class GameState(AuthState):
     water_rate_disp: str = "0/h"
     energy_disp: str = "100/100"
     toast: str = ""
+    toast_until: float = 0.0
+    _last_toast_msg: str = ""
     nests_list: list[list] = []  # [nest_id, name, x, y, is_main]
     has_construction: bool = False
     construction_done_pct: int = 0
@@ -39,6 +44,8 @@ class GameState(AuthState):
     research_done_pct: int = 0
     research_label: str = ""
     research_eta: str = ""
+    test_mode: bool = False
+    is_live_ticking: bool = False
 
     def _require_login(self) -> bool:
         return not self._player_id()
@@ -60,12 +67,27 @@ class GameState(AuthState):
         return [GameState.clear_toast, GameState.refresh_game]
 
     @rx.event
+    def toggle_test_mode(self):
+        new_state = not g.is_test_mode()
+        g.set_test_mode(new_state)
+        self.test_mode = new_state
+        msg = "테스트 모드(1000배속) 활성화!" if new_state else "테스트 모드 비활성화 (1배속)"
+        self.toast = msg
+        self._last_toast_msg = msg
+        self.toast_until = g.utc_now().timestamp() + 3.0
+        return GameState.refresh_game
+
+    @rx.event
     def show_toast(self, msg: str):
         self.toast = msg
+        self._last_toast_msg = msg
+        self.toast_until = g.utc_now().timestamp() + 3.0
 
     @rx.event
     def clear_toast(self):
         self.toast = ""
+        self._last_toast_msg = ""
+        self.toast_until = 0.0
 
     @staticmethod
     def _progress(start, end) -> tuple[int, str]:
@@ -124,6 +146,7 @@ class GameState(AuthState):
             self.food_rate_disp = f"+{g.fmt_num(rates['food'])}/h"
             self.water_rate_disp = f"+{g.fmt_num(rates['water'])}/h"
             self.energy_disp = f"{self.energy:g}/{int(g.ENERGY_MAX)}"
+            self.test_mode = g.is_test_mode()
 
             cjob = s.exec(
                 select(ConstructionJob).where(ConstructionJob.nest_id == nest.id)
@@ -138,6 +161,9 @@ class GameState(AuthState):
                 )
             else:
                 self.has_construction = False
+
+            # Hook for active page state to sync page-specific data
+            self._sync_page_data(s, pid, nest)
             s.commit()
 
         if session is not None:
@@ -146,6 +172,22 @@ class GameState(AuthState):
             with game_session() as s:
                 _do_sync(s)
 
+    def _sync_page_data(self, session, pid: int, nest):
+        """Hook for subclasses (e.g. BuildingsState, BroodState) to sync page data on each tick."""
+
+        if self.toast:
+            now_ts = g.utc_now().timestamp()
+            if self.toast != self._last_toast_msg or self.toast_until == 0.0:
+                self._last_toast_msg = self.toast
+                self.toast_until = now_ts + 3.0
+            elif now_ts >= self.toast_until:
+                self.toast = ""
+                self._last_toast_msg = ""
+                self.toast_until = 0.0
+        else:
+            self._last_toast_msg = ""
+            self.toast_until = 0.0
+
     @rx.event(background=True)
     async def refresh_game(self):
         async with self:
@@ -153,4 +195,18 @@ class GameState(AuthState):
                 yield rx.redirect("/")
                 return
             self._sync_game()
+            if self.is_live_ticking:
+                return
+            self.is_live_ticking = True
+
+        try:
+            while True:
+                await asyncio.sleep(1)
+                async with self:
+                    if self._require_login():
+                        return
+                    self._sync_game()
+        finally:
+            async with self:
+                self.is_live_ticking = False
 

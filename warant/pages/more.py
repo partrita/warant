@@ -75,7 +75,39 @@ def more_page() -> rx.Component:
             spacing="3",
         ),
         panel(
-            rx.text("WarAnt v0.1 — 여왕개미 콜로니 전략 게임", size="1", color=C_DIM),
+            rx.hstack(
+                rx.hstack(
+                    pixel_img("/img/res_energy.svg", 20),
+                    rx.heading("테스트 모드", size="4"),
+                    spacing="2",
+                    align="center",
+                ),
+                rx.spacer(),
+                rx.cond(
+                    GameState.test_mode,
+                    rx.badge("1000배속 켜짐", color_scheme="green", variant="solid"),
+                    rx.badge("꺼짐 (1배속)", color_scheme="gray", variant="surface"),
+                ),
+                width="100%",
+                align="center",
+            ),
+            rx.text(
+                "먹이/물 생산 속도와 에너지 재충전 속도를 1000배 빠르게 가속합니다.",
+                size="1",
+                color=C_DIM,
+            ),
+            rx.button(
+                rx.cond(GameState.test_mode, "테스트 모드 끄기 (1배속 복귀)", "테스트 모드 켜기 (1000배속 가속)"),
+                color_scheme=rx.cond(GameState.test_mode, "gray", "amber"),
+                variant="surface",
+                width="100%",
+                size="2",
+                on_click=GameState.toggle_test_mode,
+            ),
+            spacing="3",
+        ),
+        panel(
+            rx.text("WarAnt v0.1 — 여왕개미 둥지 전략 게임", size="1", color=C_DIM),
             rx.text("먹이 · 물 · 행동 에너지로 세계를 정복하세요.", size="1", color=C_DIM),
             spacing="1",
         ),

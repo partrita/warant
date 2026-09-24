@@ -130,7 +130,7 @@ def war_between(session, alliance_a: int | None, alliance_b: int | None) -> War 
     """Active war between two alliances, if any."""
     if not alliance_a or not alliance_b or alliance_a == alliance_b:
         return None
-    wars = session.exec(select(War).where(War.active == True)).all()  # noqa: E712
+    wars = session.exec(select(War).where(War.active == True)).all()
     for w in wars:
         if {w.alliance_a_id, w.alliance_b_id} == {alliance_a, alliance_b}:
             if w.ends_at > g.utc_now():
@@ -153,6 +153,9 @@ def production_rates(session, nest: Nest, levels: dict[str, int], research: dict
         water += w
     food *= 1.0 + 0.08 * research.get("foraging", 0)
     water *= 1.0 + 0.08 * research.get("hydration", 0)
+    speed = g.get_speed_multiplier()
+    food *= speed
+    water *= speed
     cap = g.storage_capacity(levels.get("granary", 0))
     return {
         "food": food,
@@ -524,7 +527,147 @@ def _resolve_attack(session, march: March) -> None:
     )
 
 
+WILD_ENCOUNTER_KEYS = ["beetle", "spider", "wasp", "mantis"]
+
+
+def _wild_stack(distance_from_center: float, rng: random.Random) -> dict[str, int]:
+    """Wild insects scale with how deep into the wilderness you hunt."""
+    depth = min(1.0, distance_from_center / 70.0)
+    tier = rng.random() < 0.15 + 0.35 * depth  # chance of dangerous insects
+    pool = WILD_ENCOUNTER_KEYS[2:] if tier else WILD_ENCOUNTER_KEYS[:2]
+    key = rng.choice(pool)
+    size = rng.randint(4, 14) + int(depth * rng.randint(5, 20))
+    return {key: size}
+
+
+def wild_cell_info(x: int, y: int) -> dict:
+    """Deterministic wild insect stack and gatherable resources for coordinate (x, y)."""
+    rng = random.Random(int(x) * 31337 + int(y) * 7919 + 42)
+    center = g.MAP_SIZE / 2
+    dist_center = math.hypot(x - center, y - center)
+    wild = _wild_stack(dist_center, rng)
+    base_yield = 900 + 26 * dist_center
+    share = rng.uniform(0.45, 0.65)
+    food = round(base_yield * share)
+    water = round(base_yield * (1 - share))
+    return {
+        "wild": wild,
+        "dist_center": dist_center,
+        "food": food,
+        "water": water,
+        "base_yield": base_yield,
+    }
+
+
+def _resolve_wild_scout(session, march: March) -> None:
+    attacker = session.get(Player, march.player_id)
+    if attacker is None:
+        march.status = "done"
+        return
+
+    units = march.units()
+    scouts = units.get("scout", 0)
+    atk_res = research_levels(session, attacker.id)
+    scent = atk_res.get("scent_tracking", 0)
+
+    info = wild_cell_info(march.tx, march.ty)
+    wild = info["wild"]
+    food = info["food"]
+    water = info["water"]
+
+    threat = sum(unit_def(k).hull * c for k, c in wild.items())
+    scout_power = scouts * (10 + 4 * scent)
+
+    ratio = scout_power / max(threat * 0.35, 20.0)
+    prob = min(0.95, max(0.20, 0.35 + 0.40 * math.tanh(ratio)))
+    success = RNG.random() < prob
+
+    if not success:
+        # Failure: all scouts killed by wild insects
+        march.set_units({})
+        march.status = "done"
+        _add_report(
+            session,
+            attacker.id,
+            "scout",
+            f"{g.fmt_coord(march.tx, march.ty)} 야생 정찰 실패 — 전멸",
+            {
+                "success": False,
+                "is_wild": True,
+                "coord": f"{march.tx}:{march.ty}",
+                "sent": scouts,
+                "losses": scouts,
+                "caught": scouts,
+            },
+        )
+        return
+
+    # Success: some scouts die during reconnaissance
+    if scouts > 1:
+        loss_pct = RNG.uniform(0.10, 0.30)
+        killed = min(scouts - 1, max(1, round(scouts * loss_pct)))
+    else:
+        killed = 0
+
+    surviving = scouts - killed
+    units["scout"] = surviving
+    march.set_units(units)
+
+    detail_score = surviving * (1 + 0.5 * scent)
+    if detail_score >= 8:
+        detail_tier = 3
+        wild_desc = ", ".join(
+            f"{(unit_def(k).name if unit_def(k) else k)} {v}마리 (총체력 {unit_def(k).hull * v:,}, 총공격 {unit_def(k).attack * v:,})"
+            for k, v in wild.items()
+        )
+        food_est = f"{food:,}"
+        water_est = f"{water:,}"
+    elif detail_score >= 3:
+        detail_tier = 2
+        wild_desc = ", ".join(
+            f"{(unit_def(k).name if unit_def(k) else k)} 약 {max(1, round(v * RNG.uniform(0.85, 1.15)))}마리"
+            for k, v in wild.items()
+        )
+        food_est = f"약 {round(food * RNG.uniform(0.85, 1.15), -1):,}"
+        water_est = f"약 {round(water * RNG.uniform(0.85, 1.15), -1):,}"
+    else:
+        detail_tier = 1
+        wild_desc = ", ".join(f"{(unit_def(k).name if unit_def(k) else k)} 무리 감지" for k in wild)
+        food_est = f"약 {round(food, -2):,}"
+        water_est = f"약 {round(water, -2):,}"
+
+    _add_report(
+        session,
+        attacker.id,
+        "scout",
+        f"{g.fmt_coord(march.tx, march.ty)} 야생 사냥터 정찰 보고",
+        {
+            "success": True,
+            "is_wild": True,
+            "coord": f"{march.tx}:{march.ty}",
+            "sent": scouts,
+            "losses": killed,
+            "survivors": surviving,
+            "detail_tier": detail_tier,
+            "wild_desc": wild_desc,
+            "food_est": food_est,
+            "water_est": water_est,
+        },
+    )
+
+    back = _travel_time_back(march, atk_res.get("tunneling", 0))
+    now = g.utc_now()
+    march.status = "returning"
+    march.arrive_at = now
+    march.hold_until = None
+    march.return_at = now + timedelta(seconds=(g.SCOUT_HOLD_S / g.get_speed_multiplier()) + back)
+
+
 def _resolve_scout(session, march: March) -> None:
+    if march.target_nest_id is None or march.target_nest_id == 0:
+        _resolve_wild_scout(session, march)
+        return
+
     attacker = session.get(Player, march.player_id)
     target = session.get(Nest, march.target_nest_id)
     if target is None:
@@ -599,40 +742,27 @@ def _resolve_scout(session, march: March) -> None:
     march.status = "returning"
     march.arrive_at = now
     march.hold_until = None
-    march.return_at = now + timedelta(seconds=g.SCOUT_HOLD_S + back)
-
-
-WILD_ENCOUNTER_KEYS = ["beetle", "spider", "wasp", "mantis"]
-
-
-def _wild_stack(distance_from_center: float, rng: random.Random) -> dict[str, int]:
-    """Wild insects scale with how deep into the wilderness you hunt."""
-    depth = min(1.0, distance_from_center / 70.0)
-    tier = rng.random() < 0.15 + 0.35 * depth  # chance of dangerous insects
-    pool = WILD_ENCOUNTER_KEYS[2:] if tier else WILD_ENCOUNTER_KEYS[:2]
-    key = rng.choice(pool)
-    size = rng.randint(4, 14) + int(depth * rng.randint(5, 20))
-    return {key: size}
+    march.return_at = now + timedelta(seconds=(g.SCOUT_HOLD_S / g.get_speed_multiplier()) + back)
 
 
 def _resolve_hunt(session, march: March) -> None:
     player = session.get(Player, march.player_id)
     res = research_levels(session, player.id)
-    rng = random.Random(march.id * 7919)
     center = g.MAP_SIZE / 2
     dist_center = math.hypot(march.tx - center, march.ty - center)
 
     units = march.units()
-    wild = _wild_stack(dist_center, rng)
+    info = wild_cell_info(march.tx, march.ty)
+    wild = info["wild"]
     atk_mult = (1 + 0.08 * res.get("mandibles", 0)) * (1 + 0.06 * res.get("swarm_tactics", 0))
     result = battle_rounds(units, wild, atk_mult, 1.0 + 0.05 * dist_center / 50)
 
     survivors = result["atk_survivors"]
     # Gather yield based on surviving cargo and hunt duration.
     cap = _loot_capacity(survivors) * g.LOOT_EFFICIENCY
-    base_yield = 900 + 26 * dist_center  # deeper wilderness = richer pickings
+    base_yield = info["base_yield"]
     gathered_total = min(cap, base_yield)
-    share = rng.uniform(0.45, 0.65)
+    share = info["food"] / max(1.0, info["food"] + info["water"])
     food = round(gathered_total * share)
     water = round(gathered_total * (1 - share))
 
@@ -766,7 +896,7 @@ def process_due_marches(session) -> int:
         session.add(march)
         handled += 1
 
-    stale_wars = session.exec(select(War).where(War.active == True, War.ends_at <= t_now)).all()  # noqa: E712
+    stale_wars = session.exec(select(War).where(War.active == True, War.ends_at <= t_now)).all()
     for w in stale_wars:
         w.active = False
         session.add(w)
@@ -826,3 +956,56 @@ def find_free_coord(session, rng: random.Random | None = None) -> tuple[int, int
 def is_cell_free(session, x: int, y: int) -> bool:
     row = session.exec(select(Nest).where(Nest.x == x, Nest.y == y)).first()
     return row is None
+
+
+def cancel_construction(session, nest_id: int) -> tuple[bool, str, float, float]:
+    """Cancel active construction in a nest, refunding 50% of the cost.
+
+    Returns (success, building_name, refund_food, refund_water).
+    """
+    cjob = session.exec(
+        select(ConstructionJob).where(ConstructionJob.nest_id == nest_id)
+    ).first()
+    if not cjob:
+        return False, "", 0.0, 0.0
+    nest = session.get(Nest, nest_id)
+    if not nest:
+        return False, "", 0.0, 0.0
+
+    b = g.BUILDINGS.get(cjob.key)
+    b_name = b.name if b else cjob.key
+    cf, cw = g.building_cost(cjob.key, cjob.target_level)
+    rf = cf * 0.5
+    rw = cw * 0.5
+    nest.res_food += rf
+    nest.res_water += rw
+    session.add(nest)
+    session.delete(cjob)
+    return True, b_name, rf, rw
+
+
+def cancel_brood_job(session, job_id: int, nest_id: int) -> tuple[bool, str, int, float, float]:
+    """Cancel a brood/production job, refunding 50% of remaining cost.
+
+    Returns (success, unit_name, remaining_count, refund_food, refund_water).
+    """
+    job = session.get(BroodJob, job_id)
+    if not job or job.nest_id != nest_id:
+        return False, "", 0, 0.0, 0.0
+    nest = session.get(Nest, nest_id)
+    if not nest:
+        return False, "", 0, 0.0, 0.0
+
+    u = g.UNITS.get(job.unit_key)
+    u_name = u.name if u else job.unit_key
+    count = job.count
+    cost_f = (u.food if u else 0) * count
+    cost_w = (u.water if u else 0) * count
+    rf = cost_f * 0.5
+    rw = cost_w * 0.5
+    nest.res_food += rf
+    nest.res_water += rw
+    session.add(nest)
+    session.delete(job)
+    return True, u_name, count, rf, rw
+

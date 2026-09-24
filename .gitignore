@@ -18,6 +18,7 @@ reflex.lock/
 .env
 .DS_Store
 .pytest_cache/
+.hermes/
 
 # uv
 # uv.lock is committed intentionally

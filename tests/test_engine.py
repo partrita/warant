@@ -2,9 +2,11 @@
 
 from datetime import timedelta
 
-from tests.conftest import make_army, make_nest, make_player, rewind, set_levels
+from sqlmodel import select
 
-from warant import engine, gamedata as g
+from tests.conftest import make_army, make_nest, make_player, rewind, set_levels
+from warant import engine
+from warant import gamedata as g
 from warant.models import (
     BroodJob,
     ConstructionJob,
@@ -13,7 +15,6 @@ from warant.models import (
     ResearchJob,
     War,
 )
-
 
 # ---------------------------------------------------------------------------
 # Resources
@@ -165,6 +166,68 @@ def test_research_completes(session):
     assert engine.research_levels(session, p.id).get("foraging") == 1
 
 
+def test_cancel_construction_refunds_50_percent(session):
+    nest = make_nest(session, 1)
+    nest.res_food = 1000.0
+    nest.res_water = 1000.0
+    session.add(nest)
+    session.commit()
+
+    # Suppose granary lvl 2 cost
+    cf, cw = g.building_cost("granary", 2)
+    job = ConstructionJob(
+        nest_id=nest.id,
+        key="granary",
+        target_level=2,
+        started_at=g.utc_now(),
+        completes_at=g.utc_now() + timedelta(hours=1),
+    )
+    session.add(job)
+    session.commit()
+
+    ok, b_name, rf, rw = engine.cancel_construction(session, nest.id)
+    session.commit()
+
+    assert ok is True
+    assert b_name == g.BUILDINGS["granary"].name
+    assert rf == cf * 0.5
+    assert rw == cw * 0.5
+    assert nest.res_food == 1000.0 + rf
+    assert nest.res_water == 1000.0 + rw
+    assert session.exec(select(ConstructionJob).where(ConstructionJob.nest_id == nest.id)).first() is None
+
+
+def test_cancel_brood_job_refunds_50_percent(session):
+    nest = make_nest(session, 1)
+    nest.res_food = 500.0
+    nest.res_water = 500.0
+    session.add(nest)
+    session.commit()
+
+    u = g.UNITS["soldier"]
+    job = BroodJob(
+        nest_id=nest.id,
+        unit_key="soldier",
+        count=4,
+        unit_seconds=30.0,
+        started_at=g.utc_now(),
+    )
+    session.add(job)
+    session.commit()
+
+    ok, u_name, cnt, rf, rw = engine.cancel_brood_job(session, job.id, nest.id)
+    session.commit()
+
+    assert ok is True
+    assert u_name == u.name
+    assert cnt == 4
+    assert rf == u.food * 4 * 0.5
+    assert rw == u.water * 4 * 0.5
+    assert nest.res_food == 500.0 + rf
+    assert nest.res_water == 500.0 + rw
+    assert session.get(BroodJob, job.id) is None
+
+
 # ---------------------------------------------------------------------------
 # Combat
 # ---------------------------------------------------------------------------
@@ -242,7 +305,7 @@ def test_attack_win_loots_and_reports(session):
     # reports for both sides
     reports = session.query(Report).all()
     assert {r.player_id for r in reports} == {attacker.id, defender.id}
-    atk_rep = [r for r in reports if r.player_id == attacker.id][0]
+    atk_rep = next(r for r in reports if r.player_id == attacker.id)
     assert atk_rep.body()["role"] == "attacker"
 
 
@@ -261,9 +324,9 @@ def test_attack_loss_no_loot(session):
     engine.process_due_marches(session)
     session.commit()
 
-    body = [
+    body = next(
         r.body() for r in session.query(Report).all() if r.player_id == attacker.id
-    ][0]
+    )
     assert body["winner"] == "defender"
     assert body["loot_food"] == 0 and body["loot_water"] == 0
     assert (target.res_food, target.res_water) == (before_f, before_w)
@@ -284,10 +347,10 @@ def test_scout_success_and_caught(session):
     )
     engine.process_due_marches(session)
     session.commit()
-    rep = [
+    rep = next(
         r.body() for r in session.query(Report).all() if r.kind == "scout"
-    and r.player_id == attacker.id
-    ][0]
+        and r.player_id == attacker.id
+    )
     assert rep["success"] is True
     assert "res_food" in rep
     assert m1.status == "returning"
@@ -318,7 +381,7 @@ def test_hunt_yields_resources(session):
     engine.process_due_marches(session)
     session.commit()
     assert march.status in ("returning", "done")
-    rep = [r.body() for r in session.query(Report).all() if r.kind == "hunt"][0]
+    rep = next(r.body() for r in session.query(Report).all() if r.kind == "hunt")
     assert "coord" in rep
     # soldiers should survive a wild stack and bring food home
     if march.status == "returning":
@@ -364,6 +427,34 @@ def test_deploy_leaves_units_at_target(session):
     session.commit()
     assert march.status == "done"
     assert engine.army_at(session, other.id).get("soldier") == 12
+
+
+def test_wild_scout_success_and_casualty(session):
+    p = make_player(session, "scoutmaster")
+    home = make_nest(session, p.id, x=20, y=20)
+    # Target wild cell
+    march = _mk_march(
+        session, p, home, g.MARCH_SCOUT, 25, 25,
+        {"scout": 10}, target_nest_id=None,
+    )
+    engine.process_due_marches(session)
+    session.commit()
+
+    reports = session.exec(select(Report).where(Report.player_id == p.id)).all()
+    assert len(reports) >= 1
+    rep = next(r.body() for r in reports if r.kind == "scout" and r.body().get("is_wild"))
+    assert rep["is_wild"] is True
+    if rep["success"]:
+        assert rep["sent"] == 10
+        assert rep["losses"] >= 1  # some died on success
+        assert rep["survivors"] == 10 - rep["losses"]
+        assert march.status == "returning"
+        assert march.units()["scout"] == rep["survivors"]
+        assert "wild_desc" in rep
+        assert "food_est" in rep
+    else:
+        assert march.status == "done"
+        assert rep["losses"] == 10
 
 
 def test_war_score_accumulates(session):
@@ -422,3 +513,26 @@ def test_newbie_protection(session):
     set_levels(session, small_nest.id, {})
     # elder has tiny points -> still protected by points rule
     assert engine.is_protected(session, old)
+
+
+def test_test_mode_speed_multiplier(session):
+    nest = make_nest(session, 1)
+    levels = {"fungus_farm": 1, "dew_collector": 1}
+
+    # Normal mode
+    g.set_test_mode(False)
+    normal_rates = engine.production_rates(session, nest, levels, {})
+    normal_regen = g.energy_regen_rate(0)
+
+    # Test mode
+    g.set_test_mode(True)
+    try:
+        boosted_rates = engine.production_rates(session, nest, levels, {})
+        boosted_regen = g.energy_regen_rate(0)
+
+        assert boosted_rates["food"] == normal_rates["food"] * 1000.0
+        assert boosted_rates["water"] == normal_rates["water"] * 1000.0
+        assert boosted_regen == normal_regen * 1000.0
+    finally:
+        g.set_test_mode(False)
+

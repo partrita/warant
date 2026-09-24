@@ -7,7 +7,8 @@ import datetime as dt
 import reflex as rx
 from sqlmodel import select
 
-from .. import engine, gamedata as g
+from .. import engine
+from .. import gamedata as g
 from ..components.layout import (
     C_BLUE,
     C_DIM,
@@ -27,61 +28,54 @@ class ResearchState(GameState):
     rows: list[list] = []
     # [key, icon, name, desc, level, cost_f, cost_w, time_str, locked_reason, maxed, busy]
 
+    def _sync_page_data(self, s, pid: int, nest):
+        chamber = engine.get_building_level(s, nest.id, "research_chamber")
+        levels = engine.research_levels(s, pid)
+        rjob = s.exec(
+            select(ResearchJob).where(ResearchJob.player_id == pid)
+        ).first()
+        busy_key = rjob.key if rjob else ""
+        rows = []
+        for key in g.RESEARCH_ORDER:
+            r = g.RESEARCH[key]
+            lvl = levels.get(key, 0)
+            cf, cw = g.research_cost(key, lvl + 1)
+            t = g.research_time(key, lvl + 1, chamber)
+            maxed = lvl >= min(g.max_research_level(chamber), 20)
+            locked = ""
+            if chamber < r.req_chamber:
+                locked = f"연구방 {r.req_chamber}단계 필요"
+            elif r.req_research and (
+                levels.get(r.req_research, 0) < (r.req_research_level or 1)
+            ):
+                locked = (
+                    f"{g.RESEARCH[r.req_research].name} "
+                    f"{r.req_research_level or 1}단계 필요"
+                )
+            desc = r.desc
+            rows.append(
+                [
+                    key,
+                    RESEARCH_ICON[key],
+                    r.name,
+                    desc,
+                    lvl,
+                    f"{int(cf):,}",
+                    f"{int(cw):,}",
+                    g.fmt_duration(t),
+                    locked,
+                    maxed,
+                    busy_key == key,
+                ]
+            )
+        self.rows = rows
+
     @rx.event(background=True)
     async def load(self):
         async with self:
             if self._require_login():
                 return
             self._sync_game()
-            pid = self._player_id()
-
-            with game_session() as s:
-                nest = self._nest(s)
-                if nest is None:
-                    return
-                chamber = engine.get_building_level(s, nest.id, "research_chamber")
-                levels = engine.research_levels(s, pid)
-                rjob = s.exec(
-                    select(ResearchJob).where(ResearchJob.player_id == pid)
-                ).first()
-                busy_key = rjob.key if rjob else ""
-                rows = []
-                for key in g.RESEARCH_ORDER:
-                    r = g.RESEARCH[key]
-                    lvl = levels.get(key, 0)
-                    cf, cw = g.research_cost(key, lvl + 1)
-                    t = g.research_time(key, lvl + 1, chamber)
-                    maxed = lvl >= min(g.max_research_level(chamber), 20)
-                    locked = ""
-                    if chamber < r.req_chamber:
-                        locked = f"연구방 {r.req_chamber}단계 필요"
-                    elif r.req_research and (
-                        levels.get(r.req_research, 0) < (r.req_research_level or 1)
-                    ):
-                        locked = (
-                            f"{g.RESEARCH[r.req_research].name} "
-                            f"{r.req_research_level or 1}단계 필요"
-                        )
-                    desc = r.desc
-                    if key == "metabolism":
-                        desc += " · 콜로니 개미 한도 +25마리 / 단계"
-                    rows.append(
-                        [
-                            key,
-                            RESEARCH_ICON[key],
-                            r.name,
-                            desc,
-                            lvl,
-                            f"{int(cf):,}",
-                            f"{int(cw):,}",
-                            g.fmt_duration(t),
-                            locked,
-                            maxed,
-                            busy_key == key,
-                        ]
-                    )
-                self.rows = rows
-                s.commit()
 
     @rx.event(background=True)
     async def start(self, key: str):

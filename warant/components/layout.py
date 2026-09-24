@@ -23,7 +23,7 @@ NAV_H = "64px"
 TOP_H = "52px"
 
 NAV_ITEMS = [
-    ("/colony", "/img/icon_ant.svg", "콜로니"),
+    ("/colony", "/img/icon_ant.svg", "둥지"),
     ("/buildings", "/img/icon_hammer.svg", "건설"),
     ("/brood", "/img/icon_sword.svg", "군세"),
     ("/map", "/img/icon_map.svg", "지도"),
@@ -71,6 +71,10 @@ def top_bar() -> rx.Component:
             ),
             href="/colony",
             text_decoration="none",
+        ),
+        rx.cond(
+            GameState.test_mode,
+            rx.badge("⚡ 1000x", color_scheme="ruby", variant="solid", size="1"),
         ),
         rx.spacer(),
         rx.foreach(
@@ -185,9 +189,18 @@ def toast_overlay() -> rx.Component:
         GameState.toast != "",
         rx.center(
             rx.hstack(
-                rx.text(GameState.toast, size="2", color=C_TEXT),
-                rx.button("✕", size="1", variant="ghost", on_click=GameState.clear_toast,
-                          color=C_DIM),
+                pixel_img("/img/icon_ant.svg", 18),
+                rx.text(GameState.toast, size="2", color=C_TEXT, weight="medium"),
+                rx.button(
+                    "✕",
+                    size="1",
+                    variant="ghost",
+                    on_click=GameState.clear_toast,
+                    color=C_DIM,
+                    cursor="pointer",
+                ),
+                align="center",
+                spacing="2",
             ),
             position="fixed",
             top="92px",
@@ -199,8 +212,10 @@ def toast_overlay() -> rx.Component:
             background=C_PANEL_2,
             border=f"2px solid {C_AMBER}",
             border_radius="10px",
+            box_shadow="0 4px 16px rgba(0, 0, 0, 0.6)",
             padding="8px 14px",
             z_index="50",
+            transition="all 0.2s ease-in-out",
         ),
     )
 
@@ -265,16 +280,6 @@ def game_shell(active_route: str, *children, **props) -> rx.Component:
         ),
         bottom_nav(active_route),
         toast_overlay(),
-        # periodic state refresh so resources & queues tick live
-        rx.box(id="wa-refresh", display="none"),
-        rx.button(
-            "", id="wa-auto-refresh", display="none", on_click=GameState.refresh_game
-        ),
-        rx.script(
-            "window.setInterval(function(){"
-            "var b=document.getElementById('wa-auto-refresh');"
-            "if(b) b.click();}, 1000);"
-        ),
         min_height="100vh",
         background=C_BG,
         on_mount=[GameState.refresh_game] + list(page_mounts),

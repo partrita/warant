@@ -43,8 +43,10 @@ class Grid:
 
     def to_svg(self) -> str:
         parts = [
-            f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {self.w} {self.h}" '
-            'shape-rendering="crispEdges">'
+            (
+                f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {self.w} {self.h}" '
+                'shape-rendering="crispEdges">'
+            )
         ]
         # merge horizontal runs of the same color
         runs: list[tuple[int, int, int, str]] = []
@@ -687,6 +689,34 @@ def bld_brood_chamber() -> Grid:
     return g
 
 
+def bld_living_quarters() -> Grid:
+    g = Grid(16, 16)
+    pal = {
+        "m": "#b98a5a", "M": "#d9b48a", "t": "#8a6a44", "s": "#6b4e2e",
+        "y": "#e8c46a", "Y": "#ffd166", "h": "#d9a566", "w": "#fff3d6",
+    }
+    rows = [
+        "................",
+        ".....MMMM.......",
+        "....MMhhMM......",
+        "...MMhhhhMM.....",
+        "..MMmhhhhmmM....",
+        ".MMmhhhhhhmmM...",
+        ".MmhYYhhYYhmm...",
+        ".MhhYYhhYYhhm...",
+        ".Mhhsshhssshm...",
+        ".Mmssssssssmm...",
+        ".MmhYYhhYYhmm...",
+        ".MhhYYhhYYhhm...",
+        ".Mmhsshhssshm...",
+        ".MMssssssssMM...",
+        "..MMMMMMMMMM....",
+        "................",
+    ]
+    g.from_ascii(rows, pal)
+    return g
+
+
 def bld_research_chamber() -> Grid:
     g = Grid(16, 16)
     pal = {
@@ -1007,6 +1037,7 @@ SPRITES: dict[str, callable] = {
     "b_dew_collector": bld_dew_collector,
     "b_sun_chamber": bld_sun_chamber,
     "b_granary": bld_granary,
+    "b_living_quarters": bld_living_quarters,
     "b_brood_chamber": bld_brood_chamber,
     "b_research_chamber": bld_research_chamber,
     "b_tunnel_network": bld_tunnel_network,

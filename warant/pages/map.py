@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import datetime as dt
 import math
-from dataclasses import dataclass
 
 import reflex as rx
 from pydantic import BaseModel
 from sqlmodel import select
 
-from .. import engine, gamedata as g
+from .. import engine
+from .. import gamedata as g
 from ..components.layout import (
     C_AMBER,
     C_BORDER,
@@ -49,11 +49,27 @@ class MapState(GameState):
     s_protected: bool = False
     s_nest_id: int = 0
     # march form
-    unit_inputs: list[list] = []  # [key, name, count_str]
+    unit_inputs: list[list] = []  # [key, name, count_str, stationed_count]
+    total_stationed_ants: int = 0
     cargo_food: str = "0"
     cargo_water: str = "0"
     march_eta: str = ""
     my_nest_ids: list[int] = []
+
+    def _sync_units(self, s, nest_id: int, reset_inputs: bool = False):
+        army = engine.army_at(s, nest_id)
+        self.total_stationed_ants = sum(int(army.get(k, 0)) for k in g.UNIT_ORDER)
+        if reset_inputs or not self.unit_inputs:
+            cur_inputs = {}
+        else:
+            cur_inputs = {row[0]: row[2] for row in self.unit_inputs if len(row) >= 3}
+        self.unit_inputs = [
+            [k, g.UNITS[k].name, cur_inputs.get(k, "0"), int(army.get(k, 0))]
+            for k in g.UNIT_ORDER
+        ]
+
+    def _sync_page_data(self, s, pid: int, nest):
+        self._sync_units(s, nest.id)
 
     def _sync_cells(self, s, pid: int):
         nests = {
@@ -99,11 +115,37 @@ class MapState(GameState):
                 nest = self._nest(s)
                 if nest is None:
                     return
-                if self.cx == 0 and self.cy == 0:
-                    self.cx, self.cy = nest.x, nest.y
-                movable = [[k, g.UNITS[k].name, "0"] for k in g.UNIT_ORDER]
-                self.unit_inputs = movable
+                # Center on player's nest first
+                self.cx, self.cy = nest.x, nest.y
+                self.sx, self.sy = nest.x, nest.y
+                self.s_kind = "own"
+                self.s_label = nest.name
+                self.s_owner = "내 둥지"
+                self.s_protected = False
+                self.s_nest_id = nest.id
+
                 self.my_nest_ids = [n.id for n in engine.nests_of(s, pid)]
+                self._sync_units(s, nest.id, reset_inputs=True)
+                self._sync_cells(s, pid)
+
+    @rx.event(background=True)
+    async def center_on_nest(self):
+        async with self:
+            if self._require_login():
+                return
+            pid = self._player_id()
+            with game_session() as s:
+                nest = self._nest(s)
+                if nest is None:
+                    return
+                self.cx, self.cy = nest.x, nest.y
+                self.sx, self.sy = nest.x, nest.y
+                self.s_kind = "own"
+                self.s_label = nest.name
+                self.s_owner = "내 둥지"
+                self.s_protected = False
+                self.s_nest_id = nest.id
+                self._sync_units(s, nest.id)
                 self._sync_cells(s, pid)
 
     @rx.event(background=True)
@@ -135,6 +177,9 @@ class MapState(GameState):
             pid = self._player_id()
             self.sx, self.sy = x, y
             with game_session() as s:
+                nest = self._nest(s)
+                if nest:
+                    self._sync_units(s, nest.id)
                 nest_obj = s.exec(
                     select(Nest).where(Nest.x == x, Nest.y == y)
                 ).first()
@@ -163,26 +208,55 @@ class MapState(GameState):
     @rx.event
     def update_eta(self):
         units = {}
-        for k, v in self.unit_inputs:
+        for row in self.unit_inputs:
             try:
-                c = int(v[2] or 0)
+                c = int(row[2] or 0)
             except (ValueError, IndexError):
                 c = 0
             if c > 0:
-                units[k[0]] = c
+                units[row[0]] = c
         if not units or self.sx < 0:
             self.march_eta = ""
         else:
-            slow = min(g.UNITS[k].speed for k in units)
-            self.march_eta = f"최속 부대 {slow}칸/분"
+            slow = min(g.UNITS[k].speed for k in units if k in g.UNITS)
+            self.march_eta = f"부대 속도 {slow}칸/분"
 
     @rx.event(background=True)
     async def set_unit_input(self, key: str, value: str):
         async with self:
             self.unit_inputs = [
-                [row[0], row[1], value] if row[0] == key else row
+                [row[0], row[1], value, row[3] if len(row) > 3 else 0]
+                if row[0] == key
+                else row
                 for row in self.unit_inputs
             ]
+        yield MapState.update_eta
+
+    @rx.event
+    def set_max_units(self, key: str):
+        self.unit_inputs = [
+            [row[0], row[1], str(row[3]), row[3]]
+            if row[0] == key
+            else row
+            for row in self.unit_inputs
+        ]
+        return MapState.update_eta
+
+    @rx.event
+    def set_all_max_units(self):
+        self.unit_inputs = [
+            [row[0], row[1], str(row[3]), row[3]]
+            for row in self.unit_inputs
+        ]
+        return MapState.update_eta
+
+    @rx.event
+    def clear_unit_inputs(self):
+        self.unit_inputs = [
+            [row[0], row[1], "0", row[3] if len(row) > 3 else 0]
+            for row in self.unit_inputs
+        ]
+        return MapState.update_eta
 
     @rx.event
     def set_cargo_food(self, v: str):
@@ -245,7 +319,24 @@ class MapState(GameState):
                                 msg = "이송할 자원을 입력하세요."
                             else:
                                 ok = True
-                        elif kind in (g.MARCH_ATTACK, g.MARCH_SCOUT):
+                        elif kind == g.MARCH_SCOUT:
+                            if self.s_kind == "hunt":
+                                if units.get("scout", 0) <= 0:
+                                    msg = "정찰에는 정찰개미가 필요합니다."
+                                else:
+                                    ok = True
+                            else:
+                                target = s.get(Nest, self.s_nest_id)
+                                towner = (
+                                    s.get(Player, target.player_id) if target else None
+                                )
+                                if towner is None or towner.id == pid:
+                                    msg = "대상을 선택하세요."
+                                elif units.get("scout", 0) <= 0:
+                                    msg = "정찰에는 정찰개미가 필요합니다."
+                                else:
+                                    ok = True
+                        elif kind == g.MARCH_ATTACK:
                             target = s.get(Nest, self.s_nest_id)
                             towner = (
                                 s.get(Player, target.player_id) if target else None
@@ -253,7 +344,7 @@ class MapState(GameState):
                             if towner is None or towner.id == pid:
                                 msg = "대상을 선택하세요."
                             elif engine.is_protected(s, towner):
-                                msg = "신규 보호 중인 콜로니는 공격할 수 없습니다."
+                                msg = "신규 보호 중인 둥지는 공격할 수 없습니다."
                             elif towner.alliance_id and towner.alliance_id == player.alliance_id:
                                 msg = "같은 동맹을 공격할 수 없습니다."
                             else:
@@ -318,6 +409,7 @@ class MapState(GameState):
                                     )
                                     m.set_units(units)
                                     s.add(m)
+                                    self._sync_units(s, home.id, reset_inputs=True)
                                     msg = (
                                         f"{g.MARCH_NAMES[kind]} 진군 시작! "
                                         f"(도착 {g.fmt_duration(t)}, "
@@ -447,9 +539,17 @@ def _march_buttons() -> rx.Component:
         ),
         rx.cond(
             MapState.s_kind == "hunt",
-            rx.button(
-                "사냥 보내기", width="100%", color_scheme="green",
-                on_click=lambda: MapState.send_march(g.MARCH_HUNT), size="3",
+            rx.hstack(
+                rx.button(
+                    "정찰 보내기", flex="1", color_scheme="blue",
+                    on_click=lambda: MapState.send_march(g.MARCH_SCOUT), size="3",
+                ),
+                rx.button(
+                    "사냥 보내기", flex="1", color_scheme="green",
+                    on_click=lambda: MapState.send_march(g.MARCH_HUNT), size="3",
+                ),
+                spacing="2",
+                width="100%",
             ),
         ),
         spacing="2",
@@ -458,16 +558,28 @@ def _march_buttons() -> rx.Component:
 
 
 def _unit_send_row(row) -> rx.Component:
-    key, name, val = row[0], row[1], row[2]
+    key, name, val, avail = row[0], row[1], row[2], row[3]
     return rx.hstack(
-        pixel_img("/img/u_" + key.to(str) + ".svg", 22),
-        rx.text(name, size="2", width="70px"),
+        pixel_img("/img/u_" + key.to(str) + ".svg", 24),
+        rx.vstack(
+            rx.text(name, size="2", weight="bold"),
+            rx.text("주둔 ", avail.to(str), "마리", size="1", color=C_DIM),
+            spacing="0",
+            width="90px",
+        ),
         rx.input(
             value=val,
-            width="80px",
+            width="75px",
             type_="number",
             min_=0,
             on_change=lambda v: MapState.set_unit_input(key, v),
+        ),
+        rx.button(
+            "최대",
+            size="1",
+            variant="surface",
+            color_scheme="gray",
+            on_click=lambda: MapState.set_max_units(key),
         ),
         spacing="2",
         align="center",
@@ -486,6 +598,7 @@ def map_page() -> rx.Component:
                 rx.button("↑", on_click=lambda: MapState.pan(0, -1), size="2"),
                 rx.button("↓", on_click=lambda: MapState.pan(0, 1), size="2"),
                 rx.button("→", on_click=lambda: MapState.pan(1, 0), size="2"),
+                rx.button("내 둥지", on_click=MapState.center_on_nest, size="2", variant="surface", color_scheme="amber"),
                 rx.spacer(),
                 rx.text(
                     "중심 [",
@@ -504,9 +617,46 @@ def map_page() -> rx.Component:
         ),
         _selection_panel(),
         panel(
-            rx.heading("출발 군세", size="4"),
+            rx.hstack(
+                rx.heading("출발 군세", size="4"),
+                rx.spacer(),
+                rx.badge(
+                    "현재 둥지 주둔: ",
+                    MapState.total_stationed_ants.to(str),
+                    "마리",
+                    color_scheme="amber",
+                    variant="surface",
+                    size="2",
+                ),
+                align="center",
+                width="100%",
+            ),
             rx.text("보낼 개미 수를 입력하세요. 가장 느린 개미 속도로 이동합니다.",
                     size="1", color=C_DIM),
+            rx.hstack(
+                rx.button(
+                    "전체 최대",
+                    size="1",
+                    variant="surface",
+                    color_scheme="amber",
+                    on_click=MapState.set_all_max_units,
+                ),
+                rx.button(
+                    "선택 초기화",
+                    size="1",
+                    variant="ghost",
+                    color_scheme="gray",
+                    on_click=MapState.clear_unit_inputs,
+                ),
+                rx.spacer(),
+                rx.cond(
+                    MapState.march_eta != "",
+                    rx.badge(MapState.march_eta, color_scheme="blue", size="1"),
+                ),
+                spacing="2",
+                align="center",
+                width="100%",
+            ),
             rx.vstack(
                 rx.foreach(MapState.unit_inputs, _unit_send_row),
                 spacing="2",

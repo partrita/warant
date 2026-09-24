@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-
 import reflex as rx
 from sqlmodel import select
 
@@ -98,6 +96,28 @@ def _body_lines(kind: str, b: dict) -> list[str]:
         if kind == "battle":
             return _battle_lines(b, role)
         if kind == "scout":
+            if b.get("is_wild"):
+                if not b.get("success", True):
+                    return [
+                        f"야생 정찰 실패! 투입된 정찰개미 {b.get('sent', 0)}마리가 전멸했습니다.",
+                        "야생 곤충들의 기습을 받아 정찰에 실패하고 전멸했습니다.",
+                    ]
+                lines = []
+                sent = b.get("sent", 0)
+                lost = b.get("losses", 0)
+                surv = b.get("survivors", 0)
+                lines.append(f"정찰 투입: 정찰개미 {sent}마리 (생존 {surv}마리, 손실 {lost}마리)")
+                if b.get("wild_desc"):
+                    lines.append(f"서식 곤충: {b['wild_desc']}")
+                if b.get("food_est") is not None:
+                    lines.append(f"채집 가능 자원: 먹이 {b['food_est']}, 물 {b.get('water_est', '0')}")
+                tier = b.get("detail_tier", 1)
+                if tier == 1:
+                    lines.append("(정찰개미를 더 많이 보내면 정확한 개체수와 능력치를 파악할 수 있습니다)")
+                elif tier >= 3:
+                    lines.append("정밀 정찰 완료: 정확한 곤충 개체수와 채집 가능 자원을 확인했습니다.")
+                return lines
+
             if not b.get("success", True):
                 return [
                     f"정찰 실패! 정찰개미 {_fmt_losses({'scout': b.get('caught', 0)})}",
@@ -144,8 +164,10 @@ def _body_lines(kind: str, b: dict) -> list[str]:
             return lines
         if kind == "transfer":
             return [
-                f"{b.get('to','?')} ({b.get('coord','')}) 로 "
-                f"먹이 {b.get('food',0):,.0f}, 물 {b.get('water',0):,.0f} 도착"
+                (
+                    f"{b.get('to', '?')} ({b.get('coord', '')}) 로 "
+                    f"먹이 {b.get('food', 0):,.0f}, 물 {b.get('water', 0):,.0f} 도착"
+                )
             ]
         if kind == "deploy":
             units = b.get("units") or {}
@@ -157,7 +179,7 @@ def _body_lines(kind: str, b: dict) -> list[str]:
             t = b.get("text", "")
             c = b.get("coord", "")
             return [t + (f" 위치 [{c}]" if c else "")]
-    except Exception:
+    except (KeyError, ValueError, TypeError, AttributeError):
         pass
     return []
 

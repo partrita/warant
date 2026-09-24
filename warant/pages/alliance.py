@@ -8,7 +8,8 @@ import reflex as rx
 import sqlmodel
 from sqlmodel import select
 
-from .. import engine, gamedata as g
+from .. import engine
+from .. import gamedata as g
 from ..components.layout import (
     C_DIM,
     C_RED,

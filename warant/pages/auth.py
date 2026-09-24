@@ -108,7 +108,7 @@ def index() -> rx.Component:
                     style={"font_family": "'Press Start 2P', monospace"},
                 ),
                 rx.text(
-                    "여왕개미가 되어 콜로니를 키우고,\n사냥하고, 약탈하고, 동맹과 전쟁 속에서\n세계를 정복하세요.",
+                    "여왕개미가 되어 둥지를 키우고,\n사냥하고, 약탈하고, 동맹과 전쟁 속에서\n세계를 정복하세요.",
                     color=C_DIM,
                     size="2",
                     text_align="center",

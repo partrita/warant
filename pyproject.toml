@@ -22,3 +22,11 @@ package = false
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+# RUF012: Mutable class attributes are standard in Reflex State definitions
+ignore = ["RUF012", "S110"]

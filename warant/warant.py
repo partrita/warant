@@ -4,6 +4,7 @@ import asyncio
 import contextlib
 
 import reflex as rx
+
 from . import db, engine
 from .db import game_session
 from .pages.alliance import alliance_page
@@ -58,12 +59,13 @@ app = rx.App(
 app.register_lifespan_task(_game_ticker)
 
 app.add_page(index, route="/", title="WarAnt — 여왕개미 전략")
-app.add_page(colony_page, route="/colony", title="콜로니 | WarAnt")
+app.add_page(colony_page, route="/colony", title="둥지 | WarAnt")
 app.add_page(buildings_page, route="/buildings", title="건설 | WarAnt")
 app.add_page(brood_page, route="/brood", title="군세 | WarAnt")
 app.add_page(map_page, route="/map", title="지도 | WarAnt")
 app.add_page(more_page, route="/more", title="더보기 | WarAnt")
 app.add_page(research_page, route="/more/research", title="연구 | WarAnt")
+app.add_page(research_page, route="/research", title="연구 | WarAnt")
 app.add_page(reports_page, route="/more/reports", title="보고서 | WarAnt")
 app.add_page(alliance_page, route="/more/alliance", title="동맹 | WarAnt")
 app.add_page(ranking_page, route="/more/ranking", title="랭킹 | WarAnt")

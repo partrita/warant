@@ -1,20 +1,17 @@
 """Tests for colony ant population limits."""
 
-from warant.pages.brood import (
-    ANT_CAP_PER_METABOLISM,
-    BASE_ANT_CAP,
-    ant_population_cap,
-    queued_mobile_ants,
-)
-from warant.models import BroodJob
 from tests.conftest import make_nest
 from warant import gamedata as g
+from warant.models import BroodJob
+from warant.pages.brood import (
+    queued_mobile_ants,
+)
 
 
-def test_ant_population_cap_grows_with_metabolism():
-    assert ant_population_cap({}) == BASE_ANT_CAP
-    assert ant_population_cap({"metabolism": 1}) == BASE_ANT_CAP + ANT_CAP_PER_METABOLISM
-    assert ant_population_cap({"metabolism": 4}) == 150
+def test_ant_population_cap_grows_with_housing():
+    assert g.ant_population_cap(0) == g.BASE_ANT_CAP
+    assert g.ant_population_cap(1) == g.BASE_ANT_CAP + g.ANT_CAP_PER_HOUSING
+    assert g.ant_population_cap(4) == g.BASE_ANT_CAP + 4 * g.ANT_CAP_PER_HOUSING
 
 
 def test_queued_mobile_ants_excludes_defenses(session):

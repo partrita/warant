@@ -1,100 +1,177 @@
 # WarAnt 👑🐜
 
-**WarAnt** is a multiplayer browser strategy game where you play as an **ant queen**, inspired by OGame. Build your colony, forage and hunt in the wilderness, raid rival nests, and grow your empire alongside — and against — other players through **alliances and wars**.
+**WarAnt** is a real-time multiplayer browser strategy game where you play as an **ant queen**, inspired by classic 4X space strategy games like OGame. Expand your underground nest, build mushroom farms and dew collectors, hatch specialized ant castes, scout and hunt dangerous wild insects, raid rival colonies, and wage epic 72-hour alliance wars.
 
 [한국어 README](README.ko.md)
 
-## Features
+<p align="center">
+  <img src="warant_sceenshot.jpg.png" alt="WarAnt Mobile-First Nest View Screenshot" width="380" />
+</p>
 
-- **Real-time colony economy** — food and water accumulate over time (OGame-style), capped by granary storage.
-- **Action energy** — upgrades, research, and marches cost energy (max 100) that refills over time.
-- **Realistic build times** — early upgrades take seconds; high levels take hours or days.
-- **Brood chamber** — hatch workers, soldiers, scouts, flyers, majors, trap-jaws, and acid ants.
-- **World map (100×100)** — attack, scout, hunt wild insects, transfer resources, or garrison between your nests.
-- **Combat** — round-based battles with unit stats, research bonuses, thorn-gate defense, tunnel-network loot hiding, and newbie protection.
-- **Alliances & wars** — found alliances and declare 72-hour wars with kill-point scoring (+25% attack power during war).
-- **Rankings** — compete by colony points across players and alliances.
-- **Pixel-art UI** — hand-crafted pixel sprites, mobile-first design with bottom navigation.
+<p align="center">
+  <em>Mobile-first responsive UI with real-time animated pixel-art underground nest</em>
+</p>
 
-## Tech stack
+---
 
-| Layer      | Choice                                        |
-| ---------- | --------------------------------------------- |
-| Full-stack | [Reflex](https://reflex.dev) (Python → React) |
-| Database   | SQLModel / SQLAlchemy (SQLite default, PostgreSQL optional) |
-| Deps       | [uv](https://docs.astral.sh/uv/)              |
-| Deploy     | Docker / docker compose                       |
-| Assets     | Generated pixel-art SVGs (`scripts/gen_sprites.py`) |
+## 🌟 Key Features
 
-## Quick start (local dev)
+### 🏰 Colony Management & Economy
+- **Real-Time Colony Economy** — Food (🍒) and Water (💧) accumulate passively, capped by Granary storage.
+- **Action Energy (⚡)** — Upgrades, brood hatching, research, and marches consume energy (max 100) that refills over time (boosted by the Sun Chamber).
+- **Living Quarters & Population Cap** — Upgrade **Living Quarters (개미 숙소)** to expand your nest's ant capacity.
+- **Queue & Refund System** — Cancel in-progress construction or brood batches anytime with a **50% resource refund**.
+- **Underground Pixel Animation** — Dynamic animated cross-section GIF that evolves as your colony grows from a tiny mound to a bustling ant empire.
 
-Requires Python 3.12 and [uv](https://docs.astral.sh/uv/).
+### 🐜 Brood Chamber & Castes
+- **Batch Hatching with Smart Slider** — Choose hatch quantities with an interactive slider that automatically calculates max affordable ants based on current resources and housing space.
+- **7 Specialized Ant Units**:
+  - 🐜 **Worker Ant (일개미)**: Efficient resource foraging and carrying capacity.
+  - ⚔️ **Soldier Ant (병정개미)**: Fast, balanced frontline infantry.
+  - 👁️ **Scout Ant (정찰개미)**: High-speed reconnaissance unit for spying on nests and wild territories.
+  - 🪽 **Flyer (비행개미)**: Rapid aerial raider capable of swift strikes.
+  - 🛡️ **Major Ant (대형병정)**: Heavy armor and devastating siege strength.
+  - 💥 **Trap-Jaw Ant (함정턱개미)**: High-burst ambush predator.
+  - 🧪 **Acid Ant (산개미)**: Ranged acid spitter that bypasses heavy carapace.
 
+### 🗺️ World Map & Exploration (100×100 Grid)
+- **Wild Scouting (야생 정찰)** — Send scout ants into the wilderness to investigate wild insect nests. Scouting success and intel detail (insect numbers and wild resources) scale with your scout count, with realistic casualty risks on dangerous missions.
+- **Insect Hunting (야생 사냥)** — Deploy armies to hunt beetles, spiders, wasps, and mantises for massive food and water bounties.
+- **Nest Raids & Recon** — Attack enemy queens to plunder unhidden resources or scout their defenses.
+- **Garrison & Transfers** — Relocate troops and transfer resources between allied or own nests.
+
+### ⚔️ Tactical Combat & Defense
+- **Round-Based Battle Simulation** — Calculates casualties using unit stats, research bonuses, and defensive fortifications.
+- **Thorn Gates & Pit Traps** — Fortify your nest against invaders.
+- **Tunnel Networks (터널망)** — Safeguard a portion of your resources from enemy raids.
+- **Newbie Protection** — Safe harbor for newly founded nests.
+
+### 🤝 Alliances & Wars
+- **Alliances** — Found or join alliances, coordinate garrisons, and share intel.
+- **72-Hour Alliance Wars** — Declare war with a +25% combat buff and battle kill-point leaderboard.
+- **Global Rankings** — Compete for supremacy across individual and alliance leaderboards.
+
+---
+
+## 🛠️ Tech Stack
+
+| Layer | Technology |
+| --- | --- |
+| **Full-Stack Framework** | [Reflex](https://reflex.dev) (Pure Python → React/Next.js) |
+| **Database & ORM** | SQLModel / SQLAlchemy (SQLite default, PostgreSQL supported) |
+| **Package Manager** | [uv](https://docs.astral.sh/uv/) (Python 3.12) |
+| **Deployment** | Docker & Docker Compose |
+| **Pixel Art Engine** | Script-generated SVG sprites & animated GIFs (`scripts/gen_sprites.py`) |
+
+---
+
+## 🚀 Quick Start (Local Development)
+
+### Prerequisites
+- Python 3.12+
+- [uv](https://docs.astral.sh/uv/) package manager
+
+### 1. Install and Bootstrap
 ```bash
-uv sync                      # install dependencies
-uv run python scripts/gen_sprites.py   # regenerate pixel art into assets/img/
-uv run reflex init           # one-time frontend bootstrap
-uv run reflex run            # dev server at http://localhost:3000
+# Clone repository
+git clone https://github.com/partrita/warant.git
+cd warant
+
+# Install dependencies with uv
+uv sync
+
+# Regenerate pixel-art sprites (optional)
+uv run python scripts/gen_sprites.py
+
+# Bootstrap Reflex frontend
+uv run reflex init
 ```
 
-Run tests:
+### 2. Run Dev Server
+```bash
+uv run reflex run
+```
+Open [http://localhost:3000](http://localhost:3000) in your browser. (Backend API runs on `:8000`).
 
+### 3. Run Unit Tests
 ```bash
 uv run pytest
 ```
 
-## Deploy with Docker
+---
+
+## 🐳 Production Deployment (Docker)
 
 ```bash
-docker compose up --build
+docker compose up --build -d
 ```
-
-The game listens on **http://localhost:8000**. Data persists in the `warant_data` volume (`/data/warant.db`). Set `WARANT_SECRET` for session-token signing, and optionally switch to PostgreSQL by pointing `WARANT_DATABASE_URL` at a `postgres` service (see `docker-compose.yml`).
-
-## How to play
-
-1. **Register** — pick a queen name; your first nest is founded on a free map cell.
-2. **Grow** — upgrade the fungus farm (food), dew collector (water), sun chamber (energy regen), and granary (storage).
-3. **Hatch ants** — the brood chamber turns resources into units over real time.
-4. **Scout & hunt** — send scouts to spy on neighbors; send workers/soldiers to wilderness cells to hunt insects for bonus food and water (watch out — deeper wilderness is more dangerous).
-5. **Raid** — attack enemy nests to steal stored resources (tunnel networks hide some of it).
-6. **Ally** — join or found an alliance; leaders can declare wars worth kill points.
-7. **Climb the rankings** — every building level, unit, and tech contributes colony points.
-
-### Resources
-
-| Icon | Resource | Purpose |
-| ---- | -------- | ------- |
-| 🍒 | **Food** | Buildings, units, research |
-| 💧 | **Water** | Buildings, units, research |
-| ⚡ | **Energy** | Action currency — costs energy to upgrade/build/march; refills over time (sun chamber speeds this up) |
-
-## Project structure
-
-```
-warant/
-├── rxconfig.py            # Reflex config
-├── pyproject.toml         # uv-managed dependencies
-├── Dockerfile             # production image (frontend pre-built)
-├── docker-compose.yml
-├── scripts/gen_sprites.py # pixel-art SVG generator -> assets/img/
-├── tests/                 # engine unit tests (pytest)
-└── warant/
-    ├── warant.py          # app wiring, routes, background ticker
-    ├── gamedata.py        # balance: buildings, units, research, formulas
-    ├── models.py          # SQLModel tables
-    ├── engine.py          # resource ticks, queues, marches, combat
-    ├── db.py              # engine/session factory (SQLite/Postgres)
-    ├── auth_state.py      # register/login/logout (bcrypt + signed cookie)
-    ├── components/layout.py  # mobile-first shell (top bar, bottom nav)
-    └── pages/             # colony, buildings, brood, research, map,
-                           # reports, alliance, ranking, more
-```
-
-## Agents
-
-AI agents working on this repository should read [`AGENTS.md`](AGENTS.md) first.
+The game will be available at **http://localhost:8000**.
+- Database persists in the `warant_data` named volume (`/data/warant.db`).
+- Set `WARANT_SECRET` in your environment for secure session cookies.
+- To switch to PostgreSQL, set `WARANT_DATABASE_URL=postgresql://user:pass@postgres:5432/warant`.
 
 ---
 
-MIT License — see [LICENSE](LICENSE).
+## 🎮 How to Play
+
+1. **Found Your Nest** — Register with your queen's name; your nest is placed on an open world-map coordinate.
+2. **Develop Infrastructure**:
+   - 🍄 **Fungus Farm (버섯 농장)**: Produces Food.
+   - 💧 **Dew Collector (이슬 수집기)**: Produces Water.
+   - ☀️ **Sun Chamber (양광실)**: Accelerates Energy recovery.
+   - 🌾 **Granary (저장고)**: Increases resource capacity.
+   - 🏠 **Living Quarters (개미 숙소)**: Increases population cap.
+3. **Research Technologies** — Upgrade Pheromone Communication, Mandible Hardening (턱 강화), Chitin Carapace, and Olfactory Tracking.
+4. **Hatch Your Swarm** — Use the brood slider to hatch workers and specialized combatants.
+5. **Scout & Hunt** — Send scout ants to gather intel on wilderness cells, then send strike teams to harvest wild insect bounties.
+6. **Raid & Defend** — Scout rival nests, breach their gates, and plunder resources while fortifying your own tunnels.
+7. **Join an Alliance** — Band together with fellow queens to conquer the leaderboard!
+
+---
+
+## 📁 Project Structure
+
+```
+warant/
+├── rxconfig.py              # Reflex project configuration
+├── pyproject.toml           # uv project & dependency definitions
+├── Dockerfile               # Multi-stage production container
+├── docker-compose.yml       # Docker compose setup
+├── scripts/
+│   └── gen_sprites.py       # Pixel-art SVG & GIF generator
+├── tests/                   # Engine unit tests (pytest)
+│   ├── test_engine.py
+│   ├── test_ant_population.py
+│   └── test_balance.py
+└── warant/
+    ├── warant.py            # App entry point, routes, background tick loop
+    ├── gamedata.py          # Balance constants (buildings, units, tech, formulas)
+    ├── models.py            # SQLModel database tables
+    ├── engine.py            # Lazy simulation ticks, queues, marches, combat
+    ├── db.py                # Database connection factory
+    ├── auth_state.py        # Authentication & session management
+    ├── components/
+    │   └── layout.py        # Mobile-first shell (top bar, HUD, bottom nav)
+    └── pages/               # Game pages
+        ├── colony.py        # Nest overview & pixel animation
+        ├── buildings.py     # Construction & queue management
+        ├── brood.py         # Unit hatching with quantity slider
+        ├── research.py      # Tech tree
+        ├── map.py           # 100x100 world map, scouting & hunts
+        ├── reports.py       # Combat & scout reports
+        ├── alliance.py      # Alliance management & wars
+        ├── ranking.py       # Player & alliance leaderboards
+        └── more.py          # Settings, guides, profile
+```
+
+---
+
+## 🤖 Agents
+
+AI agents contributing to this codebase should review [`AGENTS.md`](AGENTS.md) before making changes.
+
+---
+
+## 📄 License
+
+MIT License — see [LICENSE](LICENSE) for details.

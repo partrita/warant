@@ -5,7 +5,8 @@ from __future__ import annotations
 import reflex as rx
 from sqlmodel import select
 
-from .. import engine, gamedata as g
+from .. import engine
+from .. import gamedata as g
 from ..components.layout import (
     C_BLUE,
     C_BORDER,
@@ -24,19 +25,6 @@ from ..game_state import GameState
 from ..models import BroodJob, Nest, Player
 
 
-BASE_ANT_CAP = 50
-ANT_CAP_PER_METABOLISM = 25
-
-
-def ant_population_cap(research: dict[str, int]) -> int:
-    """Maximum mobile ants this colony can support.
-
-    Every colony starts at 50 ants. Metabolism research adds 25 population
-    capacity per completed level, while also reducing unit production time.
-    """
-    return BASE_ANT_CAP + ANT_CAP_PER_METABOLISM * research.get("metabolism", 0)
-
-
 def queued_mobile_ants(session, nest_id: int) -> int:
     """Count mobile ants already committed to brood queues."""
     return sum(
@@ -46,42 +34,121 @@ def queued_mobile_ants(session, nest_id: int) -> int:
     )
 
 
-def _unit_row(key: str, nest: Nest, brood_lvl: int, research: dict[str, int]) -> list:
+def _unit_row(
+    key: str,
+    nest: Nest,
+    brood_lvl: int,
+    research: dict[str, int],
+    available_pop: int,
+    count_input: int = 1,
+) -> list:
     u = g.UNITS[key]
     locked = ""
     if u.req_research and research.get(u.req_research, 0) < u.req_research_level:
         locked = f"{g.RESEARCH[u.req_research].name} {u.req_research_level}단계 필요"
     t = g.unit_build_time(key, brood_lvl, research.get("metabolism", 0))
-    is_def = key in g.DEFENSE_ORDER
     stat_line = (
         f"공 {u.attack} · 방 {u.defense} · 체 {u.hull}"
-        + (f" · 속도 {u.speed}" if not is_def else "")
+        + f" · 속도 {u.speed}"
         + (f" · 운반 {u.cargo}" if u.cargo else "")
     )
-    badge = "방어 시설" if is_def else "이동 부대"
+
+    if locked:
+        max_hatchable = 0
+    else:
+        max_f = int(nest.res_food // u.food) if u.food > 0 else 9999
+        max_w = int(nest.res_water // u.water) if u.water > 0 else 9999
+        max_hatchable = max(0, min(max_f, max_w, available_pop))
+
+    if max_hatchable > 0:
+        c = max(1, min(count_input, max_hatchable))
+    else:
+        c = 0
+
     return [
         key,
         f"/img/u_{key}.svg",
         u.name,
         u.desc,
-        badge,
+        "이동 부대",
         stat_line,
         f"{int(u.food):,}",
         f"{int(u.water):,}",
         g.fmt_duration(t),
         locked,
-        "1",
+        c,              # row[10]: count
+        max_hatchable,  # row[11]: max_hatchable
     ]
 
 
 class BroodState(GameState):
     unit_rows: list[list] = []
-    # [key, icon, name, desc, badge, stat_line, cost_f, cost_w, time_str, locked, count_input]
-    jobs: list[list] = []  # [icon, name, remaining, pct]
+    # [key, icon, name, desc, badge, stat_line, cost_f, cost_w, time_str, locked, count, max_hatchable]
+    jobs: list[list] = []  # [id, icon, name, remaining, pct, unit_key]
     army_chips: list[list] = []  # [icon, name, count]
     brood_level: int = 0
     ant_population: int = 0
-    ant_population_cap: int = BASE_ANT_CAP
+    ant_population_cap: int = g.BASE_ANT_CAP
+
+    def _sync_page_data(self, s, pid: int, nest):
+        research = engine.research_levels(s, pid)
+        brood_lvl = engine.get_building_level(s, nest.id, "brood_chamber")
+        housing_lvl = engine.get_building_level(s, nest.id, "living_quarters")
+        self.brood_level = brood_lvl
+        self.ant_population_cap = g.ant_population_cap(housing_lvl)
+        army = engine.army_at(s, nest.id)
+        current = sum(army.get(key, 0) for key in g.UNIT_ORDER)
+        queued = queued_mobile_ants(s, nest.id)
+        self.ant_population = current
+        available_pop = max(0, self.ant_population_cap - current - queued)
+
+        cur_counts = {}
+        for row in self.unit_rows:
+            if len(row) >= 11:
+                try:
+                    cur_counts[row[0]] = int(row[10])
+                except (ValueError, TypeError):
+                    cur_counts[row[0]] = 1
+
+        self.unit_rows = [
+            _unit_row(
+                key,
+                nest,
+                brood_lvl,
+                research,
+                available_pop,
+                count_input=cur_counts.get(key, 1),
+            )
+            for key in g.UNIT_ORDER
+        ]
+
+        jobs_out = []
+        for j in s.exec(
+            select(BroodJob).where(BroodJob.nest_id == nest.id)
+        ).all():
+            if j.unit_key not in g.UNIT_ORDER:
+                continue
+            unit_sec = max(j.unit_seconds, 0.001)
+            elapsed = max(0.0, (g.utc_now() - j.started_at).total_seconds())
+            cur_progress = elapsed % unit_sec
+            pct = int(min(100, max(0, cur_progress / unit_sec * 100)))
+            jobs_out.append(
+                [
+                    j.id,
+                    f"/img/u_{j.unit_key}.svg",
+                    g.UNITS[j.unit_key].name,
+                    j.count,
+                    pct,
+                    j.unit_key,
+                ]
+            )
+        self.jobs = jobs_out
+
+        self.army_chips = [
+            [f"/img/u_{k}.svg", g.UNITS[k].name, v]
+            for k, v in sorted(army.items())
+            if v > 0 and k in g.UNIT_ORDER
+        ]
 
     @rx.event(background=True)
     async def load(self):
@@ -89,47 +156,46 @@ class BroodState(GameState):
             if self._require_login():
                 return
             self._sync_game()
-            pid = self._player_id()
 
+    @rx.event
+    def set_slider_count(self, key: str, val: list[int] | int):
+        c = val[0] if isinstance(val, list) else int(val)
+        self.unit_rows = [
+            (
+                row[:10] + [c] + row[11:]
+                if row[0] == key
+                else row
+            )
+            for row in self.unit_rows
+        ]
+
+    @rx.event
+    def set_max_count(self, key: str):
+        self.unit_rows = [
+            (
+                row[:10] + [row[11]] + row[11:]
+                if row[0] == key
+                else row
+            )
+            for row in self.unit_rows
+        ]
+
+    @rx.event(background=True)
+    async def cancel_brood_job(self, job_id: int):
+        async with self:
+            if self._require_login():
+                return
             with game_session() as s:
                 nest = self._nest(s)
                 if nest is None:
                     return
-                research = engine.research_levels(s, pid)
-                brood_lvl = engine.get_building_level(s, nest.id, "brood_chamber")
-                self.brood_level = brood_lvl
-                self.ant_population_cap = ant_population_cap(research)
-                army = engine.army_at(s, nest.id)
-                self.ant_population = sum(army.get(key, 0) for key in g.UNIT_ORDER)
-                self.unit_rows = [
-                    _unit_row(key, nest, brood_lvl, research)
-                    for key in g.UNIT_ORDER + g.DEFENSE_ORDER
-                ]
-
-                jobs_out = []
-                for j in s.exec(
-                    select(BroodJob).where(BroodJob.nest_id == nest.id)
-                ).all():
-                    unit_sec = max(j.unit_seconds, 0.001)
-                    elapsed = max(0.0, (g.utc_now() - j.started_at).total_seconds())
-                    cur_progress = elapsed % unit_sec
-                    pct = int(min(100, max(0, cur_progress / unit_sec * 100)))
-                    jobs_out.append(
-                        [
-                            f"/img/u_{j.unit_key}.svg",
-                            g.UNITS[j.unit_key].name,
-                            j.count,
-                            pct,
-                        ]
-                    )
-                self.jobs = jobs_out
-
-                self.army_chips = [
-                    [f"/img/u_{k}.svg", g.UNITS[k].name, v]
-                    for k, v in sorted(army.items())
-                    if v > 0
-                ]
-                s.commit()
+                ok, u_name, cnt, rf, rw = engine.cancel_brood_job(s, job_id, nest.id)
+                if ok:
+                    s.commit()
+                    self.toast = f"{u_name} ×{cnt}마리 부화가 취소되었습니다. (자원 50% 반환: 먹이 +{int(rf):,}, 물 +{int(rw):,})"
+                else:
+                    self.toast = "부화 작업을 취소할 수 없습니다."
+        yield BroodState.load
 
     @rx.event(background=True)
     async def start_brood(self, key: str):
@@ -156,7 +222,7 @@ class BroodState(GameState):
                         if row[0] == key:
                             try:
                                 cnt = max(1, min(9999, int(row[10])))
-                            except ValueError:
+                            except (ValueError, TypeError):
                                 cnt = 1
                             break
 
@@ -164,13 +230,15 @@ class BroodState(GameState):
                         army = engine.army_at(s, nest.id)
                         current = sum(army.get(unit_key, 0) for unit_key in g.UNIT_ORDER)
                         queued = queued_mobile_ants(s, nest.id)
-                        cap = ant_population_cap(research)
+                        housing_lvl = engine.get_building_level(s, nest.id, "living_quarters")
+                        cap = g.ant_population_cap(housing_lvl)
                         available = max(0, cap - current - queued)
                         if cnt > available:
                             msg = (
-                                f"콜로니 개미 수 한도 초과입니다. "
+                                f"둥지 개미 수 한도 초과입니다. "
                                 f"현재 {current + queued:,}/{cap:,}마리, "
-                                f"최대 {available:,}마리까지 부화할 수 있습니다."
+                                f"최대 {available:,}마리까지 부화할 수 있습니다. "
+                                f"(건설 > 개미 숙소를 확장하세요)"
                             )
                             s.commit()
                             self.toast = msg
@@ -216,29 +284,27 @@ class BroodState(GameState):
             self.toast = msg
         yield BroodState.load
 
-    @rx.event
-    def set_count(self, key: str, value: str):
-        self.unit_rows = [
-            (
-                row[:10] + [value]
-                if row[0] == key
-                else row
-            )
-            for row in self.unit_rows
-        ]
-
 
 def _job_row(j) -> rx.Component:
+    job_id = j[0]
     return rx.vstack(
         rx.hstack(
-            pixel_img(j[0], 20),
-            rx.text(j[1], size="2", weight="bold"),
+            pixel_img(j[1], 20),
+            rx.text(j[2], size="2", weight="bold"),
             rx.spacer(),
-            rx.text(j[2].to(str), "마리 남음", size="1", color=C_DIM),
+            rx.text(j[3].to(str), "마리 남음", size="1", color=C_DIM),
+            rx.button(
+                "취소",
+                size="1",
+                variant="surface",
+                color_scheme="red",
+                on_click=lambda: BroodState.cancel_brood_job(job_id),
+            ),
             spacing="2",
+            align="center",
             width="100%",
         ),
-        progress_bar(j[3], C_GREEN),
+        progress_bar(j[4], C_GREEN),
         spacing="1",
         width="100%",
     )
@@ -260,10 +326,12 @@ def _army_chip(a) -> rx.Component:
 
 
 def _unit_card(row) -> rx.Component:
-    key, icon, name, desc, badge, stat_line, cf, cw, t_str, locked, count = (
+    key, icon, name, desc, badge, stat_line, cf, cw, t_str, locked = (
         row[0], row[1], row[2], row[3], row[4], row[5], row[6], row[7], row[8],
-        row[9], row[10],
+        row[9],
     )
+    count = row[10].to(int)
+    max_hatchable = row[11].to(int)
     return panel(
         rx.hstack(
             rx.image(
@@ -302,17 +370,41 @@ def _unit_card(row) -> rx.Component:
         rx.cond(
             locked != "",
             rx.button(locked, disabled=True, width="100%", size="2", variant="surface"),
-            rx.hstack(
-                rx.input(
-                    value=count,
-                    width="72px",
-                    type_="number",
-                    min_=1,
-                    on_change=lambda v: BroodState.set_count(key, v),
+            rx.vstack(
+                rx.hstack(
+                    rx.text("부화 수량:", size="2", color=C_DIM),
+                    rx.badge(count.to(str), "마리", color_scheme="amber", size="2"),
+                    rx.spacer(),
+                    rx.text("최대 가능: ", max_hatchable.to(str), "마리", size="1", color=C_DIM),
+                    rx.button(
+                        "최대",
+                        size="1",
+                        variant="surface",
+                        color_scheme="gray",
+                        disabled=max_hatchable <= 0,
+                        on_click=lambda: BroodState.set_max_count(key),
+                    ),
+                    spacing="2",
+                    align="center",
+                    width="100%",
+                ),
+                rx.slider(
+                    value=[count],
+                    min=rx.cond(max_hatchable > 0, 1, 0),
+                    max=rx.cond(max_hatchable > 0, max_hatchable, 1),
+                    step=1,
+                    disabled=max_hatchable <= 0,
+                    on_change=lambda v: BroodState.set_slider_count(key, v),
+                    width="100%",
                 ),
                 rx.button(
-                    "부화시키기",
-                    flex="1",
+                    rx.cond(
+                        max_hatchable > 0,
+                        "부화 시작 (" + count.to(str) + "마리)",
+                        "자원 / 주거지 부족",
+                    ),
+                    disabled=max_hatchable <= 0,
+                    width="100%",
                     size="2",
                     color_scheme="grass",
                     on_click=lambda: BroodState.start_brood(key),
@@ -332,7 +424,7 @@ def brood_page() -> rx.Component:
         panel(
             rx.hstack(
                 pixel_img("/img/u_worker.svg", 22),
-                rx.text("콜로니 개미", size="2", weight="bold"),
+                rx.text("둥지 개미", size="2", weight="bold"),
                 rx.spacer(),
                 rx.text(
                     BroodState.ant_population.to(str),
@@ -347,8 +439,7 @@ def brood_page() -> rx.Component:
                 width="100%",
             ),
             rx.text(
-                "기본 한도 50마리 · 신진대사 연구 1단계마다 +25마리. "
-                "연구는 개미 생산 시간도 단축합니다.",
+                "기본 한도 50마리 · 개미 숙소 건설로 주거 한도를 확장할 수 있습니다.",
                 size="1",
                 color=C_DIM,
             ),
@@ -384,3 +475,4 @@ def brood_page() -> rx.Component:
         ),
         on_load=[BroodState.load],
     )
+
